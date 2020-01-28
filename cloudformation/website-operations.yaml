@@ -1,0 +1,281 @@
+# Copyright 2020 Nicholas Christian
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#    http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Has to be in US-EAST-1. Creates the lambda edge functions for CloudFront, creates the SNS topic to alert on a Route53 healthcheck failure, and creates a lambda function that checks the status of all relevent healthchecks.
+Parameters:
+  PoC:
+    Type: String
+    Description: Person of Contact. Must be an email.
+    AllowedPattern: (?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|"(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21\x23-\x5b\x5d-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])*")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\[(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?|[a-z0-9-]*[a-z0-9]:(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21-\x5a\x53-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])+)\])
+  Application:
+    Type: String
+    Description: This value will be added to each resource name and tag in order to
+      identify the application. Will also be used as a way to identify resources in
+      code and IAM.
+    AllowedPattern: (?=^.{3,63}$)(?!^(\d+\.)+\d+$)(^(([a-z0-9]|[a-z0-9][a-z0-9\-]*[a-z0-9])\.)*([a-z0-9]|[a-z0-9][a-z0-9\-]*[a-z0-9])$)
+  Environment:
+    Type: String
+    Description: The environment these resources are for. Value will be appended onto
+      the end of the resource names.
+    AllowedPattern: (?=^.{3,63}$)(?!^(\d+\.)+\d+$)(^(([a-z0-9]|[a-z0-9][a-z0-9\-]*[a-z0-9])\.)*([a-z0-9]|[a-z0-9][a-z0-9\-]*[a-z0-9])$)
+  BusinessUnit:
+    Type: String
+    Description: The domain/subdomain/unit to assign this stack to.
+  LambdaBucket:
+    Type: String
+    Description: The S3 bucket where the Lambda packages will be stored.
+    AllowedPattern: (?=^.{3,63}$)(?!^(\d+\.)+\d+$)(^(([a-z0-9]|[a-z0-9][a-z0-9\-]*[a-z0-9])\.)*([a-z0-9]|[a-z0-9][a-z0-9\-]*[a-z0-9])$)
+  MainRegion:
+    Type: String
+    Description: Main region for deployment
+  SecondaryRegion:
+    Type: String
+    Description: Secondary region for deployment
+Resources:
+  SecurityHeadersFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Application}-security-headers-${Environment}'
+      Handler: index.handler
+      Role: !GetAtt 'SecurityHeadersFunctionRole.Arn'
+      Code:
+        ZipFile: |
+              'use strict';
+              exports.handler = (event, context, callback) => {
+                  
+                  //Get contents of response
+                  const response = event.Records[0].cf.response;
+                  const headers = response.headers;
+
+              //Set new headers 
+               headers['strict-transport-security'] = [{key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubdomains; preload'}]; 
+               headers['content-security-policy'] = [{key: 'Content-Security-Policy', value: "default-src 'none'; img-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'"}]; 
+               headers['x-content-type-options'] = [{key: 'X-Content-Type-Options', value: 'nosniff'}]; 
+               headers['x-frame-options'] = [{key: 'X-Frame-Options', value: 'DENY'}]; 
+               headers['x-xss-protection'] = [{key: 'X-XSS-Protection', value: '1; mode=block'}]; 
+               headers['referrer-policy'] = [{key: 'Referrer-Policy', value: 'same-origin'}];
+               headers['feature-policy'] = [{key: 'Feature-Policy', value: 'geolocation none; midi none; notifications none; push none; sync-xhr none; microphone none; camera none; magnetometer none; gyroscope none; speaker self; vibrate none; fullscreen self; payment none;',}]; 
+                  
+                  //Return modified response
+                  callback(null, response);
+              };
+      Runtime: nodejs10.x
+      Timeout: 5
+      Tags:
+        - Key: PoC
+          Value: !Ref 'PoC'
+        - Key: Name
+          Value: !Sub '${Application}-security-headers-${Environment}'
+        - Key: Application
+          Value: !Ref 'Application'
+        - Key: Environment
+          Value: !Ref 'Environment'
+        - Key: BusinessUnit
+          Value: !Ref 'BusinessUnit'
+        - Key: ApplicationRole
+          Value: website
+        - Key: Confidentiality
+          Value: Public
+  SecurityHeadersFunctionVersion:
+    Type: AWS::Lambda::Version
+    Properties:
+      Description: !Sub 'Lambda function version for ${Application}-security-headers-${Environment} '
+      FunctionName: !GetAtt 'SecurityHeadersFunction.Arn'
+  SecurityHeadersFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2008-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - edgelambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      RoleName: !Sub '${Application}-security-headers-${Environment}'
+      ManagedPolicyArns:
+        - !Ref 'SecurityHeadersFunctionPolicy'
+  SecurityHeadersFunctionPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: !Sub 'Adds permissions for the lambda function: ${Application}-security-headers-${Environment}'
+      Path: /
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: 0
+            Effect: Allow
+            Action:
+              - logs:GetLogEvents
+              - logs:PutLogEvents
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:DescribeLogStreams
+            Resource:
+              - !Sub 'arn:aws:logs:*:${AWS::AccountId}:/aws/lambda/${Application}-security-headers-${Environment}'
+              - !Sub 'arn:aws:logs:*:${AWS::AccountId}:/aws/lambda/${Application}-security-headers-${Environment}:log-stream:*'
+      ManagedPolicyName: !Sub '${Application}-security-headers-${Environment}'
+  OperationalTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      Tags:
+        - Key: PoC
+          Value: !Ref 'PoC'
+        - Key: Name
+          Value: !Sub '${Application}-website-ops-notif-${Environment}'
+        - Key: Application
+          Value: !Ref 'Application'
+        - Key: Environment
+          Value: !Ref 'Environment'
+        - Key: Business Unit
+          Value: !Ref 'BusinessUnit'
+        - Key: ApplicationRole
+          Value: operations
+        - Key: Confidentiality
+          Value: Non-Public
+      TopicName: !Sub '${Application}-website-ops-${Environment}'
+  OperationalSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !Ref 'PoC'
+      Protocol: email
+      TopicArn: !Ref 'OperationalTopic'
+  NodeHealthCheckFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Application}-node-healthcheck-${Environment}'
+      Handler: index.handler
+      Role: !GetAtt 'NodeHealthCheckFunctionRole.Arn'
+      Code:
+        S3Bucket: !Ref 'LambdaBucket'
+        S3Key: !Sub '${Application}/${Environment}/node_health_check.zip'
+      Runtime: python3.7
+      Timeout: 15
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref 'Environment'
+          APPLICATION: !Ref 'Application'
+          SNS_TOPIC: !Ref 'OperationalTopic'
+          MAIN_REGION: !Ref 'MainRegion'
+          SECONDARY_REGION: !Ref 'SecondaryRegion'
+      Tags:
+        - Key: PoC
+          Value: !Ref 'PoC'
+        - Key: Name
+          Value: !Sub '${Application}-node-healthcheck-${Environment}'
+        - Key: Application
+          Value: !Ref 'Application'
+        - Key: Environment
+          Value: !Ref 'Environment'
+        - Key: BusinessUnit
+          Value: !Ref 'BusinessUnit'
+        - Key: ApplicationRole
+          Value: Checks website node healthchecks
+        - Key: Confidentiality
+          Value: Non-Public
+  NodeHealthCheckFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2008-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      RoleName: !Sub '${Application}-node-healthcheck-${Environment}'
+      ManagedPolicyArns:
+        - !Ref 'NodeHealthCheckFunctionPolicy'
+  NodeHealthCheckFunctionPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: !Sub 'Adds permissions for the lambda function: ${Application}-node-healthcheck-${Environment}'
+      Path: /
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: 0
+            Effect: Allow
+            Action:
+              - route53:GetHealthCheck
+              - route53:ListTagsForResource
+              - route53:GetHealthCheckStatus
+              - route53:GetHealthCheckLastFailureReason
+            Resource: arn:aws:route53:::healthcheck/*
+          - Sid: 1
+            Effect: Allow
+            Action: route53:ListHealthChecks
+            Resource: '*'
+          - Sid: 2
+            Effect: Allow
+            Action:
+              - ssm:GetParameter
+              - ssm:PutParameter
+            Resource: !Sub 'arn:aws:ssm:*:*:parameter/${Application}/${Environment}/*'
+          - Sid: 3
+            Effect: Allow
+            Action: sns:Publish
+            Resource: !Ref 'OperationalTopic'
+          - Sid: 4
+            Effect: Allow
+            Action:
+              - logs:GetLogEvents
+              - logs:PutLogEvents
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:DescribeLogStreams
+            Resource:
+              - !GetAtt 'NodeHealthCheckLogGroup.Arn'
+              - !Sub '${NodeHealthCheckLogGroup.Arn}:log-stream:*'
+      ManagedPolicyName: !Sub '${Application}-node-healthcheck-${Environment}'
+  NodeHealthCheckLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${Application}-node-healthcheck-${Environment}'
+      RetentionInDays: 7
+  NodeHealthCheckScheduledRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: !Sub 'ScheduledRule for ${Application}-node-healthcheck-${Environment} '
+      ScheduleExpression: rate(3 minutes)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt 'NodeHealthCheckFunction.Arn'
+          Id: !Sub '${Application}-node-healthcheck-targetrule-${Environment}'
+  NodeHealthCheckPermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref 'NodeHealthCheckFunction'
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt 'NodeHealthCheckScheduledRule.Arn'
+Outputs:
+  WebsiteSecurityHeadersFunctionVersionARN:
+    Description: The Lambda function version ARN that hides the HTML file at the end
+      of the path
+    Value: !Ref 'SecurityHeadersFunctionVersion'
+    Export:
+      Name: !Sub '${Application}-security-headers-version-${Environment}'
+  WebsiteOperationalTopicARN:
+    Description: The SNS Topic for serverless website needs.
+    Value: !Ref 'OperationalTopic'
+    Export:
+      Name: !Sub '${Application}-website-ops-${Environment}'

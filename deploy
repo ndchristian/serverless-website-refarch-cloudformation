@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -e
+
+while getopts e:*: option
+do
+	case "${option}"
+	in
+	e) ENVIRONMENT=${OPTARG};;
+	*) # Handles unassigned arguments 
+	esac
+done
+
+
+# shellcheck disable=SC1091
+source config -e "$ENVIRONMENT"
+
+aws --region "$REGION" cloudformation deploy --template-file cloudformation/website-primary-logging-bucket.yaml \
+											 --stack-name "$PRIMARY_LOGGING_STACK_NAME" \
+											 --parameter-overrides PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" BusinessUnit="$BUSINESSUNIT" \
+											 --tags PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" BussinessUnit="$BUSINESSUNIT" Name="$PRIMARY_LOGGING_STACK_NAME" \
+											 --no-fail-on-empty-changeset
+PRIMARY_LOGGING_BUCKET=$(aws --region "$REGION" cloudformation describe-stacks --stack-name "$PRIMARY_LOGGING_STACK_NAME" \
+																			   --query "Stacks[0].Outputs[?OutputKey=='PrimaryLoggingBucketName'].OutputValue" \
+												                               --output text)
+aws --region us-east-1 cloudformation deploy --template-file cloudformation/website-operations.yaml \
+						  --stack-name "$OPERATIONAL_STACK_NAME" \
+						  --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+						  --parameter-overrides PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" \
+						   						BusinessUnit="$BUSINESSUNIT" LambdaBucket="$US_EAST_1_LAMBDA_BUCKET" PrimaryLoggingBucket="$PRIMARY_LOGGING_BUCKET" \
+						   						MainRegion="$REGION" SecondaryRegion="$SECONDARY_REGION" \
+						  --tags PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" BussinessUnit="$BUSINESSUNIT" Name="$OPERATIONAL_STACK_NAME" \
+						  --no-fail-on-empty-changeset
+
+ SECURITY_HEADERS_ARN=$(aws cloudformation --region us-east-1 describe-stacks --stack-name "$OPERATIONAL_STACK_NAME" \
+																			  --query "Stacks[0].Outputs[?OutputKey=='WebsiteSecurityHeadersFunctionVersionARN'].OutputValue" \
+																			  --output text)
+
+ SNS_TOPIC_ARN=$(aws cloudformation --region us-east-1 describe-stacks --stack-name "$OPERATIONAL_STACK_NAME" \
+																	   --query "Stacks[0].Outputs[?OutputKey=='WebsiteOperationalTopicARN'].OutputValue" \
+																	   --output text)
+
+aws cloudformation --region "$SECONDARY_REGION" deploy --template-file cloudformation/website-secondary.yaml \
+													 --stack-name "$SECONDARY_SOURCE_STACK_NAME" \
+													 --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+													 --parameter-overrides PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" \
+														  					  BusinessUnit="$BUSINESSUNIT" PrimaryLoggingBucket="$PRIMARY_LOGGING_BUCKET" \
+													 --tags PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" BusinessUnit="$BUSINESSUNIT" Name="$SECONDARY_SOURCE_STACK_NAME" \
+													 --no-fail-on-empty-changeset
+SECONDARY_BUCKET_DOMAIN_NAME=$(aws cloudformation --region "$SECONDARY_REGION" describe-stacks --stack-name "$SECONDARY_SOURCE_STACK_NAME" \
+																							   --query "Stacks[0].Outputs[?OutputKey=='SecondaryBucketDomainName'].OutputValue" \
+																							   --output text)
+SECONDARY_CLOUDFRONT_ACCESS_IDENTITY=$(aws cloudformation --region "$SECONDARY_REGION" describe-stacks --stack-name "$SECONDARY_SOURCE_STACK_NAME" \
+																									   --query "Stacks[0].Outputs[?OutputKey=='SecondaryCloudFrontAccessIdentity'].OutputValue" \
+																									   --output text)
+aws cloudformation --region "$REGION" deploy --template-file cloudformation/website-primary.yaml \
+						  				   --stack-name "$PRIMARY_WEBSITE_STACK_NAME" \
+						  				   --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+						  				   --parameter-overrides PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" \
+						  						BusinessUnit="$BUSINESSUNIT" SecondaryBucketDomainName="$SECONDARY_BUCKET_DOMAIN_NAME" \
+						  						SecondaryCloudFrontAccessIdentity="$SECONDARY_CLOUDFRONT_ACCESS_IDENTITY" \
+						  						SecurityHeadersArn="$SECURITY_HEADERS_ARN" SnsTopicArn="$SNS_TOPIC_ARN" DomainName="$DOMAINNAME" HostedZoneId="$HOSTEDZONEID"\
+						  						AcmCertificateArn="$ACMCERTIFICATIONARN" PrimaryLoggingBucket="$PRIMARY_LOGGING_BUCKET" LambdaBucket="$PRIMARY_LAMBDA_BUCKET" \
+						  				   --tags PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" BusinessUnit="$BUSINESSUNIT" Name="$PRIMARY_WEBSITE_STACK_NAME" \
+						  				   --no-fail-on-empty-changeset
+
+
+
+
+

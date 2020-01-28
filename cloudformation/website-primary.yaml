@@ -1,0 +1,494 @@
+# Copyright 2020 Nicholas Christian
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#    http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Creates a CloudFront distrubution, a public website bucket, as well as replication and deletion lambda functions that mirrors the files in the primary website bucket with the secondary website bucket
+Parameters:
+  PoC:
+    Type: String
+    Description: Person of Contact. Must be an email.
+    AllowedPattern: (?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|"(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21\x23-\x5b\x5d-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])*")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\[(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?|[a-z0-9-]*[a-z0-9]:(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21-\x5a\x53-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])+)\])
+  DomainName:
+    Type: String
+    Description: The DNS name of the website, such as example.com.
+  Application:
+    Type: String
+    Description: This value will be added to each resource name and tag in order to
+      identify the application. Will also be used as a way to identify resources in
+      code and IAM.
+    AllowedPattern: (?=^.{3,63}$)(?!^(\d+\.)+\d+$)(^(([a-z0-9]|[a-z0-9][a-z0-9\-]*[a-z0-9])\.)*([a-z0-9]|[a-z0-9][a-z0-9\-]*[a-z0-9])$)
+  Environment:
+    Type: String
+    Description: The environment these resources are for. Value will be appended onto
+      the end of the resource names.
+    AllowedPattern: (?=^.{3,63}$)(?!^(\d+\.)+\d+$)(^(([a-z0-9]|[a-z0-9][a-z0-9\-]*[a-z0-9])\.)*([a-z0-9]|[a-z0-9][a-z0-9\-]*[a-z0-9])$)
+  HostedZoneId:
+    Type: String
+    Description: The ID of the Hosted Zone of the domain name.
+  BusinessUnit:
+    Type: String
+    Description: The domain/subdomain/unit to assign this stack to.
+  AcmCertificateArn:
+    Type: String
+    Description: The Amazon Resource Name (ARN) of an AWS Certificate Manager (ACM)
+      for your domain name certificate.
+  SecurityHeadersArn:
+    Type: String
+    Description: Adds security headers to website responses.
+  SecondaryCloudFrontAccessIdentity:
+    Type: String
+    Description: Allows access to the secondary S3 bucket.
+  SecondaryBucketDomainName:
+    Type: String
+    Description: Secondary bucket domain name.
+  PrimaryLoggingBucket:
+    Type: String
+    Description: The name of the primary logging bucket used for this website.
+  LambdaBucket:
+    Type: String
+    Description: The S3 bucket where the lambda function packages will be stored.
+Resources:
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${Application}-primary-website-${Environment}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      AccessControl: LogDeliveryWrite
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LoggingConfiguration:
+        DestinationBucketName: !Ref 'PrimaryLoggingBucket'
+        LogFilePrefix: !Sub 'AWS/S3/${Application}-website-primary-${Environment}/${AWS::Region}/'
+      VersioningConfiguration:
+        Status: Enabled
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt 'ReplicationFunction.Arn'
+          - Event: s3:ObjectRemoved:*
+            Function: !GetAtt 'DeletionFunction.Arn'
+      Tags:
+        - Key: PoC
+          Value: !Ref 'PoC'
+        - Key: Name
+          Value: !Sub '${Application}-website-primary-${Environment}'
+        - Key: Application
+          Value: !Ref 'Application'
+        - Key: Environment
+          Value: !Ref 'Environment'
+        - Key: Business Unit
+          Value: !Ref 'BusinessUnit'
+        - Key: ApplicationRole
+          Value: website
+        - Key: Confidentiality
+          Value: Public
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref 'WebsiteBucket'
+      PolicyDocument:
+        Statement:
+          - Principal:
+              CanonicalUser: !GetAtt 'CloudFrontOriginAccessIdentity.S3CanonicalUserId'
+            Action: s3:GetObject
+            Effect: Allow
+            Resource: !Sub '${WebsiteBucket.Arn}/*'
+            Sid: 0
+          - Principal:
+              CanonicalUser: !GetAtt 'CloudFrontOriginAccessIdentity.S3CanonicalUserId'
+            Action: s3:ListBucket
+            Effect: Allow
+            Resource: !GetAtt 'WebsiteBucket.Arn'
+            Sid: 1
+  CloudFrontOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub 'Access identity for ${WebsiteBucket}'
+  WebsiteCloudfront:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: Cloudfront Distribution pointing to S3 bucket
+        Origins:
+          - DomainName: !GetAtt 'WebsiteBucket.DomainName'
+            Id: S3Origin
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub 'origin-access-identity/cloudfront/${CloudFrontOriginAccessIdentity}'
+          - DomainName: !Ref 'SecondaryBucketDomainName'
+            Id: S3OriginSecondary
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub 'origin-access-identity/cloudfront/${SecondaryCloudFrontAccessIdentity}'
+        Enabled: true
+        HttpVersion: http2
+        DefaultRootObject: index.html
+        CacheBehaviors:
+          - AllowedMethods:
+              - HEAD
+              - GET
+            CachedMethods:
+              - HEAD
+              - GET
+            TargetOriginId: S3Origin
+            Compress: true
+            DefaultTTL: 480
+            ForwardedValues:
+              QueryString: true
+              Cookies:
+                Forward: none
+            MaxTTL: 600
+            MinTTL: 420
+            PathPattern: /
+            ViewerProtocolPolicy: redirect-to-https
+        CustomErrorResponses:
+          - ErrorCachingMinTTL: 300
+            ErrorCode: 503
+          - ErrorCachingMinTTL: 300
+            ErrorCode: 404
+            ResponseCode: 404
+            ResponsePagePath: /4xx-errors/404.html
+        Aliases:
+          - !Ref 'DomainName'
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          LambdaFunctionAssociations:
+            - EventType: origin-response
+              LambdaFunctionARN: !Ref 'SecurityHeadersArn'
+          Compress: true
+          TargetOriginId: S3Origin
+          ForwardedValues:
+            QueryString: true
+            Cookies:
+              Forward: none
+          ViewerProtocolPolicy: redirect-to-https
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          AcmCertificateArn: !Ref 'AcmCertificateArn'
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.1_2016
+        Logging:
+          Bucket: !Sub '${PrimaryLoggingBucket}.s3.amazonaws.com'
+          Prefix: !Sub 'AWS/CloudFront/${Application}/${Environment}/${AWS::Region}/'
+          IncludeCookies: false
+      Tags:
+        - Key: PoC
+          Value: !Ref 'PoC'
+        - Key: Name
+          Value: !Sub '${Application}-website-node-${AWS::Region}-${Environment}'
+        - Key: Application
+          Value: !Ref 'Application'
+        - Key: Environment
+          Value: !Ref 'Environment'
+        - Key: Business Unit
+          Value: !Ref 'BusinessUnit'
+        - Key: ApplicationRole
+          Value: website
+        - Key: Confidentiality
+          Value: Public
+  Record:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      AliasTarget:
+        DNSName: !GetAtt 'WebsiteCloudfront.DomainName'
+        HostedZoneId: Z2FDTNDATAQYW2
+      HostedZoneId: !Ref 'HostedZoneId'
+      HealthCheckId: !Ref 'CloudFrontHealthCheck'
+      Comment: DNS name.
+      Name: !Ref 'DomainName'
+      Type: A
+      Region: !Ref 'AWS::Region'
+      SetIdentifier: !Sub '${Application}-website-main-${Environment}'
+  RecordHealthCheck:
+    Type: AWS::Route53::HealthCheck
+    Properties:
+      HealthCheckConfig:
+        Port: 443
+        Type: HTTPS
+        FullyQualifiedDomainName: !Ref 'Record'
+        RequestInterval: 30
+        FailureThreshold: 3
+      HealthCheckTags:
+        - Key: PoC
+          Value: !Ref 'PoC'
+        - Key: Name
+          Value: !Sub '${Application}-record-website-healthcheck-primary-${Environment}'
+        - Key: Application
+          Value: !Ref 'Application'
+        - Key: Environment
+          Value: !Ref 'Environment'
+        - Key: Business Unit
+          Value: !Ref 'BusinessUnit'
+        - Key: ApplicationRole
+          Value: operations
+        - Key: Confidentiality
+          Value: Non-Public
+  CloudFrontHealthCheck:
+    Type: AWS::Route53::HealthCheck
+    Properties:
+      HealthCheckConfig:
+        Port: 443
+        Type: HTTPS
+        FullyQualifiedDomainName: !GetAtt 'WebsiteCloudfront.DomainName'
+        RequestInterval: 30
+        FailureThreshold: 3
+      HealthCheckTags:
+        - Key: PoC
+          Value: !Ref 'PoC'
+        - Key: Name
+          Value: !Sub '${Application}-cloudfront-website-healthcheck-primary-${Environment}'
+        - Key: Application
+          Value: !Ref 'Application'
+        - Key: Environment
+          Value: !Ref 'Environment'
+        - Key: Business Unit
+          Value: !Ref 'BusinessUnit'
+        - Key: ApplicationRole
+          Value: operations
+        - Key: Confidentiality
+          Value: Non-Public
+  S3HealthCheck:
+    Type: AWS::Route53::HealthCheck
+    Properties:
+      HealthCheckConfig:
+        Port: 443
+        Type: TCP
+        FullyQualifiedDomainName: !GetAtt 'WebsiteBucket.DomainName'
+        RequestInterval: 30
+        FailureThreshold: 3
+      HealthCheckTags:
+        - Key: PoC
+          Value: !Ref 'PoC'
+        - Key: Name
+          Value: !Sub '${Application}-s3-website-healthcheck-primary-${Environment}'
+        - Key: Application
+          Value: !Ref 'Application'
+        - Key: Environment
+          Value: !Ref 'Environment'
+        - Key: Business Unit
+          Value: !Ref 'BusinessUnit'
+        - Key: ApplicationRole
+          Value: operations
+        - Key: Confidentiality
+          Value: Non-Public
+  DeletionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt 'DeletionFunction.Arn'
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !Sub 'arn:aws:s3:::${Application}-primary-website-${Environment}'
+  DeletionFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Application}-deletion-${Environment}'
+      Handler: index.handler
+      Role: !GetAtt 'DeletionFunctionRole.Arn'
+      Code:
+        S3Bucket: !Ref 'LambdaBucket'
+        S3Key: !Sub '${Application}/${Environment}/deletion.zip'
+      Runtime: python3.7
+      Timeout: 15
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref 'Environment'
+          FILTERPREFIX: !Sub '${Application}-secondary-website'
+      Tags:
+        - Key: PoC
+          Value: !Ref 'PoC'
+        - Key: Name
+          Value: !Sub '${Application}-deletion-${Environment}'
+        - Key: Application
+          Value: !Ref 'Application'
+        - Key: Environment
+          Value: !Ref 'Environment'
+        - Key: BusinessUnit
+          Value: !Ref 'BusinessUnit'
+        - Key: ApplicationRole
+          Value: operations
+        - Key: Confidentiality
+          Value: Non-Public
+  DeletionFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2008-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      RoleName: !Sub '${Application}-deletion-${Environment}'
+      ManagedPolicyArns:
+        - !Ref 'DeletionFunctionPolicy'
+  DeletionFunctionPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: !Sub 'Adds permissions for the lambda function: ${Application}-deletion-${Environment}'
+      Path: /
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: 0
+            Effect: Allow
+            Action:
+              - s3:DeleteObject
+            Resource:
+              - !Sub 'arn:aws:s3:::${Application}-secondary-website-*-${Environment}/*'
+          - Sid: 1
+            Effect: Allow
+            Action:
+              - s3:ListAllMyBuckets
+            Resource: arn:aws:s3:::*
+          - Sid: 2
+            Effect: Allow
+            Action:
+              - logs:GetLogEvents
+              - logs:PutLogEvents
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:DescribeLogStreams
+            Resource:
+              - !GetAtt 'DeletionLogGroup.Arn'
+              - !Sub '${DeletionLogGroup.Arn}:log-stream:*'
+      ManagedPolicyName: !Sub '${Application}-deletion-${Environment}'
+  DeletionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${Application}-deletion-${Environment}'
+      RetentionInDays: 7
+  ReplicationFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt 'ReplicationFunction.Arn'
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !Sub 'arn:aws:s3:::${Application}-primary-website-${Environment}'
+  ReplicationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Application}-replication-${Environment}'
+      Handler: index.handler
+      Role: !GetAtt 'ReplicationFunctionRole.Arn'
+      Code:
+        S3Bucket: !Ref 'LambdaBucket'
+        S3Key: !Sub '${Application}/${Environment}/replication.zip'
+      Runtime: python3.7
+      Timeout: 15
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref 'Environment'
+          FILTERPREFIX: !Sub '${Application}-secondary-website'
+      Tags:
+        - Key: PoC
+          Value: !Ref 'PoC'
+        - Key: Name
+          Value: !Sub '${Application}-replication-${Environment}'
+        - Key: Application
+          Value: !Ref 'Application'
+        - Key: Environment
+          Value: !Ref 'Environment'
+        - Key: BusinessUnit
+          Value: !Ref 'BusinessUnit'
+        - Key: ApplicationRole
+          Value: operations
+        - Key: Confidentiality
+          Value: Non-Public
+  ReplicationFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2008-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      RoleName: !Sub '${Application}-replication-${Environment}'
+      ManagedPolicyArns:
+        - !Ref 'ReplicationFunctionPolicy'
+  ReplicationFunctionPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: !Sub 'Adds permissions for the lambda function: ${Application}-replication-${Environment}'
+      Path: /
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: 0
+            Effect: Allow
+            Action:
+              - s3:GetObject
+            Resource:
+              - !Sub 'arn:aws:s3:::${Application}-primary-website-${Environment}/*'
+          - Sid: 1
+            Effect: Allow
+            Action:
+              - s3:PutObject
+            Resource:
+              - !Sub 'arn:aws:s3:::${Application}-secondary-website-*-${Environment}/*'
+          - Sid: 2
+            Effect: Allow
+            Action:
+              - s3:ListAllMyBuckets
+            Resource: arn:aws:s3:::*
+          - Sid: 3
+            Effect: Allow
+            Action:
+              - logs:GetLogEvents
+              - logs:PutLogEvents
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:DescribeLogStreams
+            Resource:
+              - !GetAtt 'ReplicationLogGroup.Arn'
+              - !Sub '${ReplicationLogGroup.Arn}:log-stream:*'
+      ManagedPolicyName: !Sub '${Application}-replication-${Environment}'
+  ReplicationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${Application}-replication-${Environment}'
+      RetentionInDays: 7
+Outputs:
+  WebsiteBucketARN:
+    Description: The Bucket ARN that distibutes the website contents to each website
+      node bucket.
+    Value: !GetAtt 'WebsiteBucket.Arn'
+    Export:
+      Name: !Sub '${Application}-primary-website-${Environment}'
+  WebsiteS3URL:
+    Description: The S3 website URL for this region.
+    Value: !GetAtt 'WebsiteBucket.WebsiteURL'
+  CloudFrontURL:
+    Description: The CloudFront website URL.
+    Value: !GetAtt 'WebsiteCloudfront.DomainName'
+  WebsiteDomainName:
+    Description: Domain name for this website
+    Value: !Ref 'DomainName'

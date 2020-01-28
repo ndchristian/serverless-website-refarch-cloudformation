@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -e
+
+while getopts e:*: option
+do
+	case "${option}"
+	in
+	e) ENVIRONMENT=${OPTARG};;
+	*) # Handles unassigned arguments 
+	esac
+done
+
+# shellcheck disable=SC1091
+source config -e "$ENVIRONMENT"
+
+echo "S3 buckets will fail to delete, causing a terminal failure state in the majority of stacks"
+echo "The files in the S3 bucket will need to be removed and the bucket deleted manually before deleting the respective stack"
+echo "Due to the way lambda-edge works, some time will need to pass before the resources can be deleted"
+
+echo "Deleting $PRIMARY_WEBSITE_STACK_NAME..."
+aws --region "$REGION" cloudformation delete-stack --stack-name "$PRIMARY_WEBSITE_STACK_NAME"
+aws --region "$REGION" cloudformation wait stack-delete-complete --stack-name "$PRIMARY_WEBSITE_STACK_NAME" || true
+
+echo "Deleting $SECONDARY_SOURCE_STACK_NAME..."
+aws --region "$SECONDARY_REGION" cloudformation delete-stack --stack-name "$SECONDARY_SOURCE_STACK_NAME"
+aws --region "$SECONDARY_REGION" cloudformation wait stack-delete-complete --stack-name "$SECONDARY_SOURCE_STACK_NAME" || true
+
+echo "Deleting $OPERATIONAL_STACK_NAME..."
+aws --region us-east-1 cloudformation delete-stack --stack-name "$OPERATIONAL_STACK_NAME"
+aws --region us-east-1 cloudformation wait stack-delete-complete --stack-name "$OPERATIONAL_STACK_NAME" || true
+
+echo "Deleting $PRIMARY_LOGGING_STACK_NAME..."
+aws --region "$REGION" cloudformation delete-stack --stack-name "$PRIMARY_LOGGING_STACK_NAME"
+aws --region "$REGION" cloudformation wait stack-delete-complete --stack-name "$PRIMARY_LOGGING_STACK_NAME" || true

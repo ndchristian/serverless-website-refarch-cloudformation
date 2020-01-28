@@ -1,0 +1,69 @@
+
+set -e
+
+while getopts e:*: option
+do
+	case "${option}"
+	in
+	e) ENVIRONMENT=${OPTARG};;
+	*) # Handles unassigned arguments 
+	esac
+done
+
+# Global Variables
+
+APPLICATION=''
+BUSINESSUNIT=''
+
+# Environment Variables
+if [[ $ENVIRONMENT == "dev" ]];
+then
+	ACMCERTIFICATIONARN=''
+	DOMAINNAME=''
+	HOSTEDZONEID=''
+	POC=''
+	REGION=''
+	SECONDARY_REGION=''
+	PRIMARY_LAMBDA_BUCKET=''
+	US_EAST_1_LAMBDA_BUCKET=''
+fi
+if [[ $ENVIRONMENT == "test" ]];
+then
+	ACMCERTIFICATIONARN=''
+	DOMAINNAME=''
+	HOSTEDZONEID=''
+	POC=''
+	REGION=''
+	SECONDARY_REGION=''
+	PRIMARY_LAMBDA_BUCKET=''
+	US_EAST_1_LAMBDA_BUCKET=''
+	
+fi
+if [[ $ENVIRONMENT == "stage" ]];
+then
+	ACMCERTIFICATIONARN=''
+	DOMAINNAME=''
+	HOSTEDZONEID=''
+	POC=''
+	REGION=''
+	SECONDARY_REGION=''
+	PRIMARY_LAMBDA_BUCKET=''
+	US_EAST_1_LAMBDA_BUCKET=''
+fi
+if [[ $ENVIRONMENT == "prod" ]];
+then
+	ACMCERTIFICATIONARN=''
+	DOMAINNAME=''
+	HOSTEDZONEID=''
+	POC=''
+	REGION=''
+	SECONDARY_REGION=''
+	PRIMARY_LAMBDA_BUCKET=''
+	US_EAST_1_LAMBDA_BUCKET=''
+fi
+
+
+PRIMARY_LOGGING_STACK_NAME="$APPLICATION-website-primary-logging-bucket-$ENVIRONMENT"
+OPERATIONAL_STACK_NAME="$APPLICATION-website-operational-$ENVIRONMENT"
+SECONDARY_SOURCE_STACK_NAME="$APPLICATION-website-secondary-source-$ENVIRONMENT"
+PRIMARY_WEBSITE_STACK_NAME="$APPLICATION-website-primary-website-$ENVIRONMENT"
