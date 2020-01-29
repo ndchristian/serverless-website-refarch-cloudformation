@@ -19,7 +19,6 @@ import os
 
 import boto3
 from botocore.exceptions import ClientError
-from botocore.exceptions import ParamValidationError
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -83,18 +82,6 @@ def handler(event, context):
                     )
                 )["Parameter"]["Value"]
             except ClientError as e:
-                ssm.put_parameter(
-                    Name="/{}/{}/{}".format(
-                        os.environ["APPLICATION"],
-                        os.environ["ENVIRONMENT"],
-                        health_check_info["HealthCheck"]["HealthCheckConfig"]["FullyQualifiedDomainName"],
-                    ),
-                    Description="Stores state for %s serverless website health checks" % os.environ["APPLICATION"],
-                    Value="UNKNOWN",
-                    Type="String",
-                    Overwrite=True
-                )
-
                 logger.info(e.response["Error"]["Code"])
                 last_known_status = "UNKNOWN"
 
@@ -115,31 +102,19 @@ def handler(event, context):
                     Message=message,
                     Subject="Website node in {} has failed".format(os.environ["ENVIRONMENT"]),
                 )
+
+                ssm.put_parameter(
+                    Name="/{}/{}/{}".format(
+                        os.environ["APPLICATION"],
+                        os.environ["ENVIRONMENT"],
+                        health_check_info["HealthCheck"]["HealthCheckConfig"]["FullyQualifiedDomainName"],
+                    ),
+                    Description="Stores state for %s serverless website health checks" % os.environ["APPLICATION"],
+                    Value="FAILED",
+                    Type="String",
+                    Overwrite=True,
+                )
                 logger.info(message)
-                try:
-                    ssm.put_parameter(
-                        Name="/{}/{}/{}".format(
-                            os.environ["APPLICATION"],
-                            os.environ["ENVIRONMENT"],
-                            health_check_info["HealthCheck"]["HealthCheckConfig"]["FullyQualifiedDomainName"],
-                        ),
-                        Description="Stores state for %s serverless website health checks" % os.environ["APPLICATION"],
-                        Value="FAILED",
-                        Type="String",
-                        Overwrite=True
-                    )
-                except ParamValidationError:
-                    ssm.put_parameter(
-                        Name="/{}/{}/{}".format(
-                            os.environ["APPLICATION"],
-                            os.environ["ENVIRONMENT"],
-                            health_check_info["HealthCheck"]["HealthCheckConfig"]["FullyQualifiedDomainName"],
-                        ),
-                        Description="Stores state for %s serverless website health checks" % os.environ["APPLICATION"],
-                        Value="FAILED",
-                        Type="String",
-                        Overwrite=True
-                    )
 
             if set(current_status_times).isdisjoint(last_failures_times) and last_known_status == "FAILED":
                 pretty_report = json.dumps(current_status, indent=4, sort_keys=True, default=default)
@@ -156,8 +131,6 @@ def handler(event, context):
                     Subject="Website node in {} is back up".format(os.environ["ENVIRONMENT"]),
                 )
 
-                logger.info(message)
-
                 ssm.put_parameter(
                     Name="/{}/{}/{}".format(
                         os.environ["APPLICATION"],
@@ -165,7 +138,7 @@ def handler(event, context):
                         health_check_info["HealthCheck"]["HealthCheckConfig"]["FullyQualifiedDomainName"],
                     ),
                     Description="Stores state for %s serverless website health checks" % os.environ["APPLICATION"],
-                    Value="FAILED",
+                    Value="OKAY",
                     Type="String",
                     Overwrite=True,
                 )
