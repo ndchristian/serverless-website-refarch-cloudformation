@@ -89,12 +89,9 @@ def handler(event, context):
                 "OKAY",
                 "UNKNOWN",
             ]:
-                pretty_report = json.dumps(current_status, indent=4, sort_keys=True, default=default)
 
-                message = "{} (Health check Id: {}) has failed. \nReport: \n\n{}".format(
-                    health_check_info["HealthCheck"]["HealthCheckConfig"]["FullyQualifiedDomainName"],
-                    health_check,
-                    pretty_report,
+                message = "{} has failed. Please visit https://console.aws.amazon.com/route53/healthchecks/home?region=us-east-1#/ for more information.".format(
+                    health_check_info["HealthCheck"]["HealthCheckConfig"]["FullyQualifiedDomainName"]
                 )
 
                 sns.publish(
@@ -117,12 +114,8 @@ def handler(event, context):
                 logger.info(message)
 
             if set(current_status_times).isdisjoint(last_failures_times) and last_known_status == "FAILED":
-                pretty_report = json.dumps(current_status, indent=4, sort_keys=True, default=default)
-
-                message = "{} (Health check Id: {}) is back up. \nReport: \n\n{}".format(
-                    health_check_info["HealthCheck"]["HealthCheckConfig"]["FullyQualifiedDomainName"],
-                    health_check,
-                    pretty_report,
+                message = "{} is back up. Please visit https://console.aws.amazon.com/route53/healthchecks/home?region=us-east-1#/ for more information.".format(
+                    health_check_info["HealthCheck"]["HealthCheckConfig"]["FullyQualifiedDomainName"]
                 )
 
                 sns.publish(
