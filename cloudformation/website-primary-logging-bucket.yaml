@@ -40,6 +40,16 @@ Resources:
     UpdateReplacePolicy: Retain
     Properties:
       BucketName: !Sub '${Application}-primary-logging-${Environment}'
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:Put
+            Filter:
+              S3Key: 
+                Rules:
+                  - Name: prefix
+                    Value: !Sub 'AWS/CloudFront/${Application}/${Environment}/'
+            Function:
+              Fn::ImportValue: !Sub '${Application}-wafblacklistingfunction-${Environment}'
       VersioningConfiguration:
         Status: Enabled
       LifecycleConfiguration:
@@ -76,8 +86,7 @@ Resources:
           Value: Non-Public
 Outputs:
   PrimaryLoggingBucketName:
-    Description: The Lambda function version ARN that hides the HTML file at the end
-      of the path
+    Description: Name of the primary logging bucket
     Value: !Ref 'LoggingBucket'
     Export:
       Name: !Sub '${Application}-primary-logging-bucket-${Environment}'

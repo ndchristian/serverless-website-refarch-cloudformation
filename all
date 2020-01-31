@@ -17,17 +17,28 @@ mkdir -p "packages"
 zip -r -j  "packages/node_health_check.zip" "lambda/nodehealthcheck/"
 aws s3 cp "packages/node_health_check.zip" "s3://$US_EAST_1_LAMBDA_BUCKET/$APPLICATION/$ENVIRONMENT/"
 
+zip -r -j "packages/maliciousips.zip" "lambda/maliciousips/"
+aws s3 cp "packages/maliciousips.zip" "s3://$PRIMARY_LAMBDA_BUCKET/$APPLICATION/$ENVIRONMENT/"
+
 zip -r -j "packages/replication.zip" "lambda/replication/"
 aws s3 cp "packages/replication.zip" "s3://$PRIMARY_LAMBDA_BUCKET/$APPLICATION/$ENVIRONMENT/"
 
 zip -r -j "packages/deletion.zip" "lambda/deletion/"
 aws s3 cp "packages/deletion.zip" "s3://$PRIMARY_LAMBDA_BUCKET/$APPLICATION/$ENVIRONMENT/"
 
+aws cloudformation --region "$REGION" deploy --template-file cloudformation/website-waf.yaml \
+						  				   --stack-name "$WAF_WEBSITE_STACK_NAME" \
+						  				   --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+						  				   --parameter-overrides PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" \
+						  						BusinessUnit="$BUSINESSUNIT" LambdaBucket="$PRIMARY_LAMBDA_BUCKET" \
+						  				   --tags PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" BusinessUnit="$BUSINESSUNIT" Name="$WAF_WEBSITE_STACK_NAME" \
+						  				   --no-fail-on-empty-changeset
+
 aws --region "$REGION" cloudformation deploy --template-file cloudformation/website-primary-logging-bucket.yaml \
 											 --stack-name "$PRIMARY_LOGGING_STACK_NAME" \
-											  --parameter-overrides PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" BusinessUnit="$BUSINESSUNIT" \
-											    --tags PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" BussinessUnit="$BUSINESSUNIT" Name="$PRIMARY_LOGGING_STACK_NAME" \
-											    --no-fail-on-empty-changeset
+											 --parameter-overrides PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" BusinessUnit="$BUSINESSUNIT" \
+											 --tags PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" BussinessUnit="$BUSINESSUNIT" Name="$PRIMARY_LOGGING_STACK_NAME" \
+											 --no-fail-on-empty-changeset
 PRIMARY_LOGGING_BUCKET=$(aws --region "$REGION" cloudformation describe-stacks --stack-name "$PRIMARY_LOGGING_STACK_NAME" \
 																			   --query "Stacks[0].Outputs[?OutputKey=='PrimaryLoggingBucketName'].OutputValue" \
 												                               --output text)
@@ -49,25 +60,26 @@ aws --region us-east-1 cloudformation deploy --template-file cloudformation/webs
 																	   --output text)
 
 aws cloudformation --region "$SECONDARY_REGION" deploy --template-file cloudformation/website-secondary.yaml \
-														--stack-name "$SECONDARY_SOURCE_STACK_NAME" \
-														--capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
-														--parameter-overrides PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" \
+													 --stack-name "$SECONDARY_SOURCE_STACK_NAME" \
+													 --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+													 --parameter-overrides PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" \
 														  					  BusinessUnit="$BUSINESSUNIT" PrimaryLoggingBucket="$PRIMARY_LOGGING_BUCKET" \
-														--tags PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" BusinessUnit="$BUSINESSUNIT" Name="$SECONDARY_SOURCE_STACK_NAME" \
-														--no-fail-on-empty-changeset
+													 --tags PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" BusinessUnit="$BUSINESSUNIT" Name="$SECONDARY_SOURCE_STACK_NAME" \
+													 --no-fail-on-empty-changeset
+
 SECONDARY_BUCKET_DOMAIN_NAME=$(aws cloudformation --region "$SECONDARY_REGION" describe-stacks --stack-name "$SECONDARY_SOURCE_STACK_NAME" \
 																							   --query "Stacks[0].Outputs[?OutputKey=='SecondaryBucketDomainName'].OutputValue" \
 																							   --output text)
 SECONDARY_CLOUDFRONT_ACCESS_IDENTITY=$(aws cloudformation --region "$SECONDARY_REGION" describe-stacks --stack-name "$SECONDARY_SOURCE_STACK_NAME" \
-																									   	--query "Stacks[0].Outputs[?OutputKey=='SecondaryCloudFrontAccessIdentity'].OutputValue" \
-																									   	--output text)
+																									   --query "Stacks[0].Outputs[?OutputKey=='SecondaryCloudFrontAccessIdentity'].OutputValue" \
+																									   --output text)
 aws cloudformation --region "$REGION" deploy --template-file cloudformation/website-primary.yaml \
-						  					  --stack-name "$PRIMARY_WEBSITE_STACK_NAME" \
-						  					  --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
-						  					  --parameter-overrides PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" \
+						  				   --stack-name "$PRIMARY_WEBSITE_STACK_NAME" \
+						  				   --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+						  				   --parameter-overrides PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" \
 						  						BusinessUnit="$BUSINESSUNIT" SecondaryBucketDomainName="$SECONDARY_BUCKET_DOMAIN_NAME" \
 						  						SecondaryCloudFrontAccessIdentity="$SECONDARY_CLOUDFRONT_ACCESS_IDENTITY" \
 						  						SecurityHeadersArn="$SECURITY_HEADERS_ARN" SnsTopicArn="$SNS_TOPIC_ARN" DomainName="$DOMAINNAME" HostedZoneId="$HOSTEDZONEID"\
 						  						AcmCertificateArn="$ACMCERTIFICATIONARN" PrimaryLoggingBucket="$PRIMARY_LOGGING_BUCKET" LambdaBucket="$PRIMARY_LAMBDA_BUCKET" \
-						  					  --tags PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" BusinessUnit="$BUSINESSUNIT" Name="$PRIMARY_WEBSITE_STACK_NAME" \
-						  					  --no-fail-on-empty-changeset
+						  				   --tags PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" BusinessUnit="$BUSINESSUNIT" Name="$PRIMARY_WEBSITE_STACK_NAME" \
+						  				   --no-fail-on-empty-changeset

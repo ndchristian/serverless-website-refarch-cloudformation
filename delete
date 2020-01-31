@@ -32,3 +32,7 @@ aws --region us-east-1 cloudformation wait stack-delete-complete --stack-name "$
 echo "Deleting $PRIMARY_LOGGING_STACK_NAME..."
 aws --region "$REGION" cloudformation delete-stack --stack-name "$PRIMARY_LOGGING_STACK_NAME"
 aws --region "$REGION" cloudformation wait stack-delete-complete --stack-name "$PRIMARY_LOGGING_STACK_NAME" || true
+
+echo "Deleting $WAF_WEBSITE_STACK_NAME..."
+aws --region "$REGION" cloudformation delete-stack --stack-name "$WAF_WEBSITE_STACK_NAME"
+aws --region "$REGION" cloudformation wait stack-delete-complete --stack-name "$WAF_WEBSITE_STACK_NAME" || true

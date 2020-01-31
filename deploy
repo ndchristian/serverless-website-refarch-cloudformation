@@ -14,6 +14,15 @@ done
 # shellcheck disable=SC1091
 source config -e "$ENVIRONMENT"
 
+
+aws cloudformation --region "$REGION" deploy --template-file cloudformation/website-waf.yaml \
+						  				   --stack-name "$WAF_WEBSITE_STACK_NAME" \
+						  				   --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+						  				   --parameter-overrides PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" \
+						  						BusinessUnit="$BUSINESSUNIT" LambdaBucket="$PRIMARY_LAMBDA_BUCKET" \
+						  				   --tags PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" BusinessUnit="$BUSINESSUNIT" Name="$WAF_WEBSITE_STACK_NAME" \
+						  				   --no-fail-on-empty-changeset
+
 aws --region "$REGION" cloudformation deploy --template-file cloudformation/website-primary-logging-bucket.yaml \
 											 --stack-name "$PRIMARY_LOGGING_STACK_NAME" \
 											 --parameter-overrides PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" BusinessUnit="$BUSINESSUNIT" \
@@ -46,6 +55,7 @@ aws cloudformation --region "$SECONDARY_REGION" deploy --template-file cloudform
 														  					  BusinessUnit="$BUSINESSUNIT" PrimaryLoggingBucket="$PRIMARY_LOGGING_BUCKET" \
 													 --tags PoC="$POC" Application="$APPLICATION" Environment="$ENVIRONMENT" BusinessUnit="$BUSINESSUNIT" Name="$SECONDARY_SOURCE_STACK_NAME" \
 													 --no-fail-on-empty-changeset
+
 SECONDARY_BUCKET_DOMAIN_NAME=$(aws cloudformation --region "$SECONDARY_REGION" describe-stacks --stack-name "$SECONDARY_SOURCE_STACK_NAME" \
 																							   --query "Stacks[0].Outputs[?OutputKey=='SecondaryBucketDomainName'].OutputValue" \
 																							   --output text)

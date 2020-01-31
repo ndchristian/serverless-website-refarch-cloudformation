@@ -127,6 +127,8 @@ Resources:
     Properties:
       DistributionConfig:
         Comment: Cloudfront Distribution pointing to S3 bucket
+        WebACLId:
+          Fn::ImportValue: !Sub '${Application}-webaclid-${Environment}'
         Origins:
           - DomainName: !GetAtt 'WebsiteBucket.DomainName'
             Id: S3Origin
