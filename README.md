@@ -12,6 +12,7 @@ This project aims to help deploy a basic multi-region, fault-tolerant. ready-to-
 
 | Template                            | Description                                                  |
 | ----------------------------------- | ------------------------------------------------------------ |
+| website-waf.yaml                    | Deploys a basic structure for WAF and an example lambda function that defends against malicious IPs. |
 | website-primary-logging-bucket.yaml | Creates a logging bucket in the main chosen region to ultimately be used for the central location for all S3 and CloudFront logs. |
 | website-operations.yaml             | Creates the lambda edge functions for CloudFront, creates the SNS topic to alert on a Route53 healthcheck failure, and creates a lambda function that checks the status of all relevent healthchecks. |
 | website-secondary.yaml              | Creates a regional public website bucket as a fallback for CloudFront and a regional logging bucket that replicates all logs to the primary logging bucket. |
